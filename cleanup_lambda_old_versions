@@ -1,0 +1,110 @@
+import boto3
+region = "us-west-2"
+lambda_client = boto3.client('lambda', region_name='us-west-2')
+
+def clean_lambda_versions(n):
+    function_count = 0
+    # Get all Lambda functions
+    response = lambda_client.list_functions()
+    functions_list = response.get('Functions',[])
+    #print(f"functions_list: {functions_list}")
+    while response.get('NextMarker'):
+        response = lambda_client.list_functions(
+            Marker=response.get('NextMarker')
+        )
+        functions_list.extend(response.get('Functions', []))
+    #print(f"functions_list: {functions_list}")
+    for function in functions_list:
+        function_count+=1
+        function_name = function['FunctionName']
+        print(f"Getting versions of the function {function_name}. function_count is {function_count}")
+
+        # Get all versions of the function
+        response = lambda_client.list_versions_by_function(
+            FunctionName=function_name
+        )
+        versions = response.get('Versions',[])
+        
+        while response.get('NextMarker'):
+            response = lambda_client.list_versions_by_function(
+                FunctionName=function_name,
+                Marker=response.get('NextMarker')
+            )
+            versions.extend(response.get('Versions', []))
+
+        versions = [x for x in versions if x['Version'] != '$LATEST']
+        #print(f"versions is : {versions}")
+
+        if versions:
+            latest_version = max([int(x['Version']) for x in versions])
+            print(f"Latest version: {latest_version}")
+            if len(versions) > n:
+                print(f"{function_name} Cleaning {len(versions)-n} versions...")
+
+                for version in versions:
+                    try:
+                        if int(version['Version']) <= (latest_version - n):
+                            print(f"Cleaning up version! {version['Version']}")
+                            lambda_client.delete_function(FunctionName=version['FunctionArn'])
+                    except ValueError:
+                        pass
+                print(f"{function_name} Clean up complete!")
+        else:
+            print(f"{function_name} does not have versions")
+
+def clean_lambda_layers(n: int) -> None:
+
+    layer_count = 0
+    response = lambda_client.list_layers()
+    layers_list = response.get('Layers',[])
+    while response.get('NextMarker'):
+        response = lambda_client.list_layers(
+            Marker=response.get('NextMarker')
+        )
+        layers_list.extend(response.get('Layers', []))
+
+    count = 0
+    for layer in layers_list:
+        layer_count+=1
+        layer_name = layer['LayerName']
+        print(f"Getting versions of the layer [{layer_name}]. layer_count is {layer_count}")
+
+        # Get all versions of the function
+        response = lambda_client.list_layer_versions(
+            LayerName=layer_name
+        )
+        versions = response.get('LayerVersions', [])
+        while response.get('NextMarker'):
+            response = lambda_client.list_layer_versions(
+                LayerName=layer_name,
+                Marker=response.get('NextMarker')
+            )
+            versions.extend(response.get('LayerVersions', []))
+
+        count += len(versions)
+
+        def get_latest_version(layer_versions: list) -> int:
+            layer_versions = [x for x in layer_versions if x['Version'] != '$LATEST']
+            return max(x['Version'] for x in layer_versions)
+
+        latest_version = get_latest_version(versions)
+        print(f"Latest version: {latest_version}")
+        if len(versions) > n:
+            print(f"Cleaning {len(versions) - n} versions...")
+
+            for version in versions:
+                try:
+                    if int(version['Version']) <= (latest_version - n):
+                        print(f"Cleaning up layer! {layer_name}")
+                        lambda_client.delete_layer_version(LayerName=layer_name,VersionNumber=version['Version'])
+                except ValueError:
+                    pass
+            print(f"[{layer_name}] Clean up complete!")
+
+
+
+if __name__ == "__main__":    
+    #Specify the number of most recent versions to keep
+    n = 20  #Change this value to the desired number of most recent versions to keep
+    clean_lambda_versions(n)
+    clean_lambda_layers(n)
